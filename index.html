@@ -13,44 +13,82 @@
             width: 100%;
             height: 300px;
             margin-top: 10px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            border: 1px solid #ccc;
         }
     </style>
 </head>
 <body>
     <h1>Upload and Parse PDF</h1>
     <input type="file" id="fileInput" accept="application/pdf">
-    <textarea id="pdfContent" placeholder="PDF content will appear here..."></textarea>
+    <div id="pdfContent" placeholder="PDF content will appear here..."></div>
 
-    <!-- Include pdfjs-dist library -->
+    <!-- Progress Bar -->
+    <div id="progressBarContainer" style="width: 100%; background-color: #ddd;">
+      <div id="progressBar" style="height: 20px; width: 0%; background-color: #4CAF50;"></div>
+    </div>
+    <!-- Text below the progress bar to display progress -->
+    <div id="progressText">Processing: 0%</div>
+
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js/dist/tesseract.min.js"></script>
+
     <script>
-        document.getElementById('fileInput').addEventListener('change', async (event) => {
-            const file = event.target.files[0];
-            if (file && file.type === 'application/pdf') {
-                const fileReader = new FileReader();
-                fileReader.onload = async function() {
-                    const typedArray = new Uint8Array(this.result);
-                    const pdf = await pdfjsLib.getDocument({data: typedArray}).promise;
-                    let textContent = '';
-
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const textContentObj = await page.getTextContent();
-                        const pageText = textContentObj.items.map(item => item.str).join(' ');
-                        textContent += pageText + '\n';
-                    }
-
-                    document.getElementById('pdfContent').value = textContent;
-
-                    // Release the file data by nullifying the references
-                    fileReader.onload = null;
-                    event.target.value = '';
-                };
-                fileReader.readAsArrayBuffer(file);
-            } else {
-                alert('Please upload a valid PDF file.');
+      document.getElementById('fileInput').addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (file && file.type === 'application/pdf') {
+          const fileReader = new FileReader();
+          fileReader.onload = async function() {
+            const typedArray = new Uint8Array(this.result);
+            const loadingTask = pdfjsLib.getDocument({data: typedArray});
+            const pdf = await loadingTask.promise;
+            let textContent = '';
+    
+            const updateProgress = (current, total) => {
+              const progressPercentage = ((current / total) * 100).toFixed(2);
+              const progressBar = document.getElementById('progressBar');
+              const progressText = document.getElementById('progressText');
+              progressBar.style.width = progressPercentage + '%';
+              progressText.textContent = `Processing: ${progressPercentage}%`;
+            };
+    
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+              const page = await pdf.getPage(pageNum);
+              const viewport = page.getViewport({scale: 1.5});
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              canvas.height = viewport.height;
+              canvas.width = viewport.width;
+    
+              await page.render({canvasContext: ctx, viewport: viewport}).promise;
+    
+              try {
+                const { data: { text } } = await Tesseract.recognize(canvas, 'eng', {
+                  logger: m => console.log(m)
+                });
+                textContent += `${text}\n`;
+              } catch (err) {
+                console.error('OCR error:', err);
+                continue; // Skip to the next page on error
+              }
+    
+              // Update progress after processing each page
+              updateProgress(pageNum, pdf.numPages);
             }
-        });
+    
+            document.getElementById('pdfContent').textContent = textContent;
+            // Reset progress bar and fileReader for the next use
+            updateProgress(0, 1);
+            fileReader.onload = null;
+            event.target.value = '';
+          };
+          fileReader.readAsArrayBuffer(file);
+        } else {
+          alert('Please upload a valid PDF file.');
+        }
+      });
     </script>
 </body>
 </html>
